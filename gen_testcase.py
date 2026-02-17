@@ -15,8 +15,8 @@ import numpy as np
 from scipy.stats import entropy
 import socket
 import chardet
-import gzip
 import zlib
+import base64
 
 try:
     import scapy.all as scapy
@@ -51,21 +51,40 @@ def get_datatypes(data, dport):
     dedata = ""
     for ln in data.splitlines():
         descs.append(magic.from_buffer(ln))
-        if magic.from_buffer(ln) == "gzip compressed data":
-            dedata = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16).decompress(ln)
-            get_datatypes(dedata, dport)
-            if not dedata.decode().isprintable():
-                dedata = "Not printable"
+        try:
+            if "compressed" in magic.from_buffer(ln):
+                dedata = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16).decompress(ln)
+                get_datatypes(dedata, dport)
+                if not dedata.decode().isprintable():
+                    dedata = "Not printable"
+                dt = {
+                    "MIME Type": mime_type,
+                    "data": descs,
+                    "Decompressed data": {
+                        "Hex Encoded": dedata.hex(),
+                        "ASCII Encoded": dedata.decode(errors="ignore"),
+                    },
+                }
+                return dt
+        except Exception:
+            return False
+        try:
+            if base64.b64encode(base64.b64decode(ln, validate=False)) == ln:
+                get_datatypes(base64.b64decode(ln), dport)
+                if not base64.b64decode(ln).decode().isprintable():
+                    dedata = "Not printable"
+                dt = {
+                    "MIME Type": mime_type,
+                    "data": descs,
+                    "Decoded data": {
+                        "Hex Encoded": base64.b64decode(ln).hex(),
+                        "ASCII Encoded": base64.b64decode(ln).decode(errors="ignore"),
+                    },
+                }
+                return dt
+        except Exception:
+            return False
 
-            dt = {
-                "MIME Type": mime_type,
-                "data": descs,
-                "Decompressed data": {
-                    "Hex Encoded": dedata.hex(),
-                    "ASCII Encoded": dedata.decode(errors="ignore"),
-                },
-            }
-            return dt
     udescs = list(set(descs))
     if "empty" in udescs:
         udescs.remove("empty")
