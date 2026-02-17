@@ -54,10 +54,16 @@ def get_datatypes(data, dport):
         if magic.from_buffer(ln) == "gzip compressed data":
             dedata = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16).decompress(ln)
             get_datatypes(dedata, dport)
+            if not dedata.decode().isprintable():
+                dedata = "Not printable"
+
             dt = {
                 "MIME Type": mime_type,
                 "data": descs,
-                "Decompressed data": dedata.hex(),
+                "Decompressed data": {
+                    "Hex Encoded": dedata.hex(),
+                    "ASCII Encoded": dedata.decode(errors="ignore"),
+                },
             }
             return dt
     udescs = list(set(descs))
@@ -135,8 +141,13 @@ def parse_pcap(pcap_path, srcp, dstp):
                             "TCP flags": str(p["TCP"].flags),
                             "Options": list(p["TCP"].options),
                         },
-                        "Payload": raw_d.hex(),
-                        "Packet": bytes(p).hex(),
+                        "Raw data": {
+                            "Payload": {
+                                "Hex Encoded": raw_d.hex(),
+                                "ASCII Encoded": raw_d.decode(errors="ignore"),
+                            },
+                            "Packet": bytes(p).hex(),
+                        },
                     }
                     write_info(
                         args.output,
