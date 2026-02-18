@@ -38,68 +38,53 @@ def write_info(output_dir, pdir, index, dt_json, pkt_json):
         output_dir + "/" + pdir + "/pcap.info_packet." + str(index) + ".json", "wb"
     )
     merge_json = {
-        "Packet Data": json.loads(pkt_json),
+        "Packet Info": json.loads(pkt_json),
         "Extra Info": json.loads(dt_json),
     }
     out.write(json.dumps(merge_json).encode())
     return merge_json
 
 
+def safe_decompress(compressed_data):
+    # Initialize decompressor
+    dco = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16)  # Handle gzip and zlib formats
+    result = b""
+    try:
+        result = dco.decompress(compressed_data)
+        result += dco.flush()
+    except zlib.error as e:
+        # Potentially use dco.unconsumed_tail to recover data
+        pass
+    return result
+
+
 def get_datatypes(data, dport):
     mime_type = magic.from_buffer(data, mime=True)
     descs = []
     dedata = ""
+    compressedd = {"Decompressed": False}
     for ln in data.splitlines():
         descs.append(magic.from_buffer(ln))
-        try:
-            if "compressed" in magic.from_buffer(ln):
-                dedata = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16).decompress(ln)
-                get_datatypes(dedata, dport)
-                if not dedata.decode().isprintable():
-                    dedata = "Not printable"
-                dt = {
-                    "MIME Type": mime_type,
-                    "data": descs,
-                    "Decompressed data": {
-                        "Hex Encoded": dedata.hex(),
-                        "ASCII Encoded": dedata.decode(errors="ignore"),
-                    },
-                }
-                return dt
-        except Exception:
-            return {
-                "MIME Type": mime_type,
-                "data": descs,
+        dedata = safe_decompress(ln)
+        if dedata and len(dedata) > 0:
+            compressedd = {
+                "Decompressed data": {
+                    "Decompressed Hex Encoded": dedata.hex(),
+                    "Decompressed ASCII Encoded": dedata.decode(errors="ignore"),
+                },
             }
-        try:
-            if base64.b64encode(base64.b64decode(ln, validate=False)) == ln:
-                get_datatypes(base64.b64decode(ln), dport)
-                if not base64.b64decode(ln).decode().isprintable():
-                    dedata = "Not printable"
-                dt = {
-                    "MIME Type": mime_type,
-                    "data": descs,
-                    "Decoded data": {
-                        "Hex Encoded": base64.b64decode(ln).hex(),
-                        "ASCII Encoded": base64.b64decode(ln).decode(errors="ignore"),
-                    },
-                }
-                return dt
-        except Exception:
-            return {
-                "MIME Type": mime_type,
-                "data": descs,
-            }
-
     udescs = list(set(descs))
     if "empty" in udescs:
         udescs.remove("empty")
     if "data" in udescs:
         udescs.remove("data")
+    if udescs == []:
+        udescs = ["Unknown data type"]
     trait_struct = get_traits(data, dport)
     dt = {
         "MIME Type": mime_type,
-        "data": udescs,
+        "Decompressed": compressedd,
+        "Data Types": udescs,
         "Traits": trait_struct,
     }
     return dt
