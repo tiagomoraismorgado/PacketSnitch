@@ -48,6 +48,18 @@ def write_info(output_dir, pdir, index, dt_json, pkt_json):
     return merge_json
 
 
+def get_netclass(ip):
+    fo = int(ip.split(".")[0])
+    if 0 <= fo <= 127:
+        return "A"
+    elif 128 <= fo <= 191:
+        return "B"
+    elif 192 <= fo <= 223:
+        return "C"
+    else:
+        return "Unknown (D/E)?"
+
+
 def safe_decompress(compressed_data):
     # Initialize decompressor
     dco = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16)  # Handle gzip and zlib formats
@@ -71,9 +83,9 @@ def get_geoip_info(ip):
                 "Time Zone": response.location.time_zone,
             }
     except geoip2.errors.AddressNotFoundError:
-        return {"Location": "Unknown"}
+        return {"Location": "Localnet"}
     except Exception as e:
-        return {"Error": str(e)}
+        return {"Location": "Error: " + str(e)}
 
 
 def get_datatypes(data, dport, srcip, destip):
@@ -127,11 +139,19 @@ def get_traits(data, dport, srcip, destip):
     encoding = chardet.detect(data)
     loc_info_src = get_geoip_info(srcip)
     loc_info_dest = get_geoip_info(destip)
+    nc_info_src = get_netclass(srcip)
+    nc_info_dest = get_netclass(destip)
     return {
         "Shannon Entropy": entop,
-        "Location Data": {
-            "Source IP": loc_info_src,
-            "Destination IP": loc_info_dest,
+        "Network Data": {
+            "Source IP": {
+                "Class": nc_info_src,
+                "Location": loc_info_src,
+            },
+            "Destination IP": {
+                "Class": nc_info_dest,
+                "Location": loc_info_dest,
+            },
         },
         "Length": data_len,
         "Port Protcol": protostr,
