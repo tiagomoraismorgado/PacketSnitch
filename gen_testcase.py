@@ -16,13 +16,17 @@ from scipy.stats import entropy
 import socket
 import chardet
 import zlib
+from datetime import datetime
+from decimal import Decimal
 import geoip2.database
 import requests
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 from bs4 import BeautifulSoup
 import ssl
+import csv
 
 database_path = "GeoLite2-City.mmdb"
+icann_csv_path = "service-names-port-numbers.csv"
 checked_ips = []
 ar = "False"
 
@@ -30,6 +34,25 @@ try:
     import scapy.all as scapy
 except ImportError:
     import scapy
+
+
+def get_port_description(port, protocol="tcp"):
+    with open(icann_csv_path, newline="", encoding="utf-8") as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            if "Port Number" in row and "Service Name" in row:
+                try:
+                    if (
+                        int(row["Port Number"]) == port
+                        and row["Transport Protocol"].lower() == protocol
+                    ):
+                        return (
+                            row["Description"]
+                            if "Description" in row
+                            else "No description available"
+                        )
+                except ValueError:
+                    continue
 
 
 def get_serv_banner(ip, port, t):
@@ -153,6 +176,10 @@ def write_info(output_dir, pdir, index, dt_json, pkt_json):
         "Extra Info": json.loads(dt_json),
     }
     out.write(json.dumps(merge_json).encode())
+    out.close()
+    main = open("all_testcases_info.json", "a")
+    main.write(json.dumps(merge_json) + "\n")
+    main.close()
     return merge_json
 
 
@@ -253,6 +280,7 @@ def get_traits(data, dport, srcip, destip, timeout):
     loc_info_dest = get_geoip_info(destip)
     nc_info_src = get_netclass(srcip)
     nc_info_dest = get_netclass(destip)
+    port_desc = get_port_description(dport)
     return {
         "Shannon Entropy": entop,
         "Network Data": {
@@ -267,6 +295,7 @@ def get_traits(data, dport, srcip, destip, timeout):
         },
         "Length": data_len,
         "Port Protcol": protostr,
+        "Port Description": port_desc,
         "Server Info": banner,
         "Characters": {
             "Charset": charset,
@@ -295,8 +324,12 @@ def parse_pcap(pcap_path, srcp, dstp, tmout):
                     dt_struct = get_datatypes(
                         raw_d, dport, p["IP"].src, p["IP"].dst, tmout
                     )
+                    timestamp = datetime.fromtimestamp(float(Decimal(p.time))).strftime(
+                        "%Y-%m-%d %H:%M:%S.%f"
+                    )
                     pkt_struct = {
                         "Packet Processed": int(s),
+                        "Packet Timestamp": timestamp,
                         "IP": {
                             "Source IP": str(p["IP"].src),
                             "Destination IP": str(p["IP"].dst),
