@@ -1,43 +1,42 @@
 # oxagast
-# use:
-#   tcpdump -w ~/capture.pcap 'port 9000'
-#   python3 pcap_gen_testcases.py ~/capture.pcap
-# this will create a testcase directory of each destination port filled with files each
-# the data section of the packets in the pcap file.  One packet is one file.  TCP header
-# info is stripped.
+#
 
-import os
-import sys
 import argparse
-import magic
+import csv
 import json
-import numpy as np
-from scipy.stats import entropy
+import os
 import socket
-import chardet
+import ssl
+import sys
 import zlib
 from datetime import datetime
 from decimal import Decimal
+import textwrap
+import chardet
 import geoip2.database
+import magic
+import numpy as np
 import requests
-from requests.packages.urllib3.exceptions import InsecureRequestWarning
 from bs4 import BeautifulSoup
-import ssl
-import csv
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+from scipy.stats import entropy
 
-database_path = "common/GeoLite2-City.mmdb"
+try:
+    import scapy.all as scapy
+    from scapy.all import rdpcap
+except ImportError:
+    import scapy
+
+geodat_path = "common/GeoLite2-City.mmdb"
 mac_vendors_path = "common/mac-vendors-export.csv"
 icann_csv_path = "common/service-names-port-numbers.csv"
 checked_ips = []
 ar = "False"
 
-try:
-    import scapy.all as scapy
-except ImportError:
-    import scapy
-
 
 def get_port_description(port, protocol="tcp"):
+    if not os.path.exists(icann_csv_path):
+        return "ICANN port description file not found!"
     with open(icann_csv_path, newline="", encoding="utf-8") as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
@@ -85,11 +84,9 @@ def get_serv_banner(ip, port, t, hostname):
             pt = get_page_title("http://" + hostname + ":" + str(port), t)
     else:
         pt = "N/A"
-
     for item in checked_ips:
         if item.get("IP") == ip and item.get("Port") == port:
             return item
-
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(t)
@@ -120,7 +117,6 @@ def get_serv_banner(ip, port, t, hostname):
                 "SSL Version": ssl_version,
                 "Encrypted With": encrypted_with,
             }
-
             checked_ips.append(bannerdata)
             s.close()
             return bannerdata
@@ -138,13 +134,13 @@ def get_serv_banner(ip, port, t, hostname):
                     "SSL Version": ssl_version,
                     "Encrypted With": encrypted_with,
                 }
-
                 checked_ips.append(bannerdata)
                 return bannerdata
             else:
                 return {
                     "IP": ip,
                     "Port": port,
+                    "Banner": "Error fetching banner: " + str(e),
                     "Page Title": pt,
                     "SSL Cert": socket_cert,
                     "SSL Version": ssl_version,
@@ -154,6 +150,7 @@ def get_serv_banner(ip, port, t, hostname):
         nobdat = {
             "IP": ip,
             "Port": port,
+            "Banner": "Error fetching banner: " + str(e),
             "Page Title": pt,
             "SSL Cert": socket_cert,
             "SSL Version": ssl_version,
@@ -165,7 +162,8 @@ def get_serv_banner(ip, port, t, hostname):
 
 def get_page_title(url, t):
     try:
-        requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
+        requests.packages.urllib3.disable_warnings(
+            category=InsecureRequestWarning)
         res = requests.get(url, timeout=t, verify=False)
         res.raise_for_status()
         cont = res.content
@@ -183,14 +181,16 @@ def write_testcase(data, output_dir, pdir, index):
     if not os.path.exists(output_dir + "/" + pdir):
         os.mkdir(output_dir + "/" + pdir)
     out = open(
-        output_dir + "/" + pdir + "/pcap.data_packet." + str(index) + ".dat", "wb"
+        output_dir + "/" + pdir + "/pcap.data_packet." +
+        str(index) + ".dat", "wb"
     )
     out.write(data)
 
 
 def write_info(output_dir, pdir, index, dt_json, pkt_json):
     out = open(
-        output_dir + "/" + pdir + "/pcap.info_packet." + str(index) + ".json", "wb"
+        output_dir + "/" + pdir + "/pcap.info_packet." +
+        str(index) + ".json", "wb"
     )
     merge_json = {
         "Packet Info": json.loads(pkt_json),
@@ -218,7 +218,8 @@ def get_netclass(ip):
 
 def safe_decompress(compressed_data):
     # Initialize decompressor
-    dco = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16)  # Handle gzip and zlib formats
+    # Handle gzip and zlib formats
+    dco = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16)
     result = b""
     try:
         result = dco.decompress(compressed_data)
@@ -229,8 +230,10 @@ def safe_decompress(compressed_data):
 
 
 def get_geoip_info(ip):
+    if not os.path.exists(geodat_path):
+        return {"Location": "Error: GeoIP database not found!"}
     try:
-        with geoip2.database.Reader(database_path) as reader:
+        with geoip2.database.Reader(geodat_path) as reader:
             response = reader.city(ip)
             return {
                 "Country": response.country.name,
@@ -342,6 +345,8 @@ def get_traits(data, dport, srcip, destip, timeout):
 
 
 def mac_addr_to_vendor(mac):
+    if not os.path.exists(mac_vendors_path):
+        return "Error: MAC vendor file not found!"
     with open(mac_vendors_path, newline="", encoding="utf-8") as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
@@ -351,19 +356,20 @@ def mac_addr_to_vendor(mac):
 
 
 def parse_pcap(pcap_path, srcp, dstp, tmout):
-    print(
-        "Generating testcases based on " + sys.argv[1] + ".  This will take a while..."
-    )
+    print("Generating testcases based on " +
+          pcap_path + ".  This will take a while...")
     s = 0
     packets = scapy.rdpcap(pcap_path)
     for p in packets:
         mac_addr_src = p.src if p.haslayer("Ethernet") else "N/A"
         mac_addr_dst = p.dst if p.haslayer("Ethernet") else "N/A"
         mac_vendor_src = (
-            mac_addr_to_vendor(mac_addr_src) if mac_addr_src != "N/A" else "N/A"
+            mac_addr_to_vendor(
+                mac_addr_src) if mac_addr_src != "N/A" else "N/A"
         )
         mac_vendor_dst = (
-            mac_addr_to_vendor(mac_addr_dst) if mac_addr_dst != "N/A" else "N/A"
+            mac_addr_to_vendor(
+                mac_addr_dst) if mac_addr_dst != "N/A" else "N/A"
         )
         if p.haslayer("TCP"):
             raw_d = p["TCP"].payload.original
@@ -421,7 +427,22 @@ def parse_pcap(pcap_path, srcp, dstp, tmout):
 
 
 parser = argparse.ArgumentParser(
-    description="Generate payload testcases from a .pcap file.", prog="gen_testcases"
+    prog="gen_testcase.py",
+    formatter_class=argparse.RawDescriptionHelpFormatter,
+    description=textwrap.dedent(
+        f"""
+This script generates payload testcases from a .pcap file. It extracts packet data,
+writes testcases, and gathers extra information such as MIME types, entropy, geoip,
+network class, banners, and more. Optionally, it performs active reconnaissance
+to enrich the output with additional network and server information.
+
+        Outputs:
+          - Testcase files: output_dir/<dest_port>/pcap.data_packet.<index>.dat
+          - Testcase info: output_dir/<dest_port>/pcap.info_packet.<index>.json
+          - all_testcases_info.json: a consolidated file with info for all testcases
+                                 """,
+    ),
+    epilog="Example usage: python3 gen_testcase.py traffic.pcap -o output_dir -s 80 -d 8080 -T 5 -a",
 )
 parser.add_argument("pcap_file", help="The .pcap file to parse.")
 parser.add_argument(
@@ -455,6 +476,7 @@ parser.add_argument(
     help="Perform active reconnaissance to gather extra info (geoip, banners, titles).",
     action="store_true",
 )
+
 args = parser.parse_args()
 ar = args.active_recon
 if not os.path.exists(args.pcap_file):
@@ -462,6 +484,5 @@ if not os.path.exists(args.pcap_file):
     sys.exit(1)
 if not os.path.exists(args.output):
     os.mkdir(args.output)
-print(parse_pcap(args.pcap_file, args.source_port, args.dest_port, args.timeout))
-print("Done.", file=sys.stderr)
-sys.exit(0)
+    parse_pcap(args.pcap_file, args.source_port, args.dest_port, args.timeout)
+    sys.exit(0)
