@@ -1,4 +1,4 @@
-active_scan: true
+active_recon: true
 database_locations:
   geoip: "common/GeoLite2-City.mmdb"
   mac_vendors: "common/mac-vendors-export.csv"

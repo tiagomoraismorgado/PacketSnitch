@@ -4,11 +4,13 @@
 import argparse
 import csv
 import json
+import shutil
 import os
 import socket
 import ssl
 import sys
 import zlib
+import time
 from datetime import datetime
 from decimal import Decimal
 import textwrap
@@ -388,6 +390,26 @@ def parse_pcap(pcap_path, srcp, dstp, tmout):
                     timestamp = datetime.fromtimestamp(float(Decimal(p.time))).strftime(
                         "%Y-%m-%d %H:%M:%S.%f"
                     )
+                    flag_data = ""
+                    if p["TCP"].flags.S:
+                        flag_data += "SYN|"
+                    if p["TCP"].flags.A:
+                        flag_data += "ACK|"
+                    if p["TCP"].flags.F:
+                        flag_data += "FIN|"
+                    if p["TCP"].flags.R:
+                        flag_data += "RST|"
+                    if p["TCP"].flags.P:
+                        flag_data += "PSH|"
+                    if p["TCP"].flags.U:
+                        flag_data += "URG|"
+                    if p["TCP"].flags.ECE:
+                        flag_data += "ECE|"
+                    if p["TCP"].flags.CWR:
+                        flag_data += "CWR|"
+                    if flag_data.endswith("|"):
+                        flag_data = flag_data[:-1]
+
                     pkt_struct = {
                         "Packet Processed": int(s),
                         "Packet Timestamp": timestamp,
@@ -400,15 +422,21 @@ def parse_pcap(pcap_path, srcp, dstp, tmout):
                         "IP": {
                             "Source IP": str(p["IP"].src),
                             "Destination IP": str(p["IP"].dst),
-                            "IP Checksum": int(p["IP"].chksum),
+                            "IP Checksum": hex(int(p["IP"].chksum)),
+                            "IP layer length": int(p["IP"].len),
                         },
                         "TCP": {
                             "Source port": int(sport),
                             "Destination port": int(dport),
                             "TCP checksum": int(p["TCP"].chksum),
                             "Urgent flag": bool(p["TCP"].urgptr),
-                            "TCP flags": str(p["TCP"].flags),
+                            "TCP Flag Data": {
+                                "List": str(p["TCP"].flags),
+                                "Translated": flag_data if flag_data else "None",
+                            },
                             "Options": list(p["TCP"].options),
+                            "TCP layer length": int(p["TCP"].dataofs * 4),
+                            "Wire length": len(p["TCP"]),
                         },
                         "Raw data": {
                             "Payload": {
@@ -416,6 +444,7 @@ def parse_pcap(pcap_path, srcp, dstp, tmout):
                                 "ASCII Encoded": raw_d.decode(errors="ignore"),
                             },
                             "Packet": bytes(p).hex(),
+                            "Payload Length": len(raw_d),
                         },
                     }
                     write_info(
@@ -561,3 +590,25 @@ if not os.path.exists(args.output):
     os.mkdir(args.output)
     parse_pcap(args.pcap_file, args.source_port, args.dest_port, args.timeout)
     sys.exit(0)
+else:
+    if (
+        input(
+            "Output directory already exists. Do you want to continue and potentially overwrite files? (y/n): "
+        ).lower()
+        != "y"
+    ):
+        print("Exiting to prevent overwriting files.", file=sys.stderr)
+        sys.exit(1)
+    try:
+        if os.path.exists("all_testcases_info.json"):
+            os.remove("all_testcases_info.json")
+        if os.path.isdir(args.output):
+            shutil.rmtree(args.output, ignore_errors=True)
+        # Small delay to ensure file system has completed deletions
+        time.sleep(1)
+        os.mkdir(args.output)
+        parse_pcap(args.pcap_file, args.source_port, args.dest_port, args.timeout)
+        sys.exit(0)
+    except Exception as e:
+        print("Error clearing output directory: " + str(e), file=sys.stderr)
+        sys.exit(1)
