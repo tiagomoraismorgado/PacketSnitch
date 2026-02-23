@@ -72,11 +72,19 @@ python3 gen_testcase.py traffic.pcap -o output_dir -s 80 -d 8080 -T 5 -a -v
 Edit `conf.yaml` to specify database locations:
 
 ```yaml
-database_locations:
-  geoip: "/path/to/GeoLite2-City.mmdb"
-  mac_vendors: "/path/to/mac_vendors.csv"
-  icann_ports: "/path/to/icann_ports.csv"
 active_recon: true
+database_locations:
+  geoip: "common/GeoLite2-City.mmdb"
+  mac_vendors: "common/mac-vendors-export.csv"
+  icann_ports: "common/service-names-port-numbers.csv"
+output_dir: "testcases"
+ollama:
+  use_llm: true
+#  model: "deepseek-r1:latest"
+  model: "minimax-m2.5:cloud"
+  response_length: 200
+  pcap_percentage: 10
+threads: 4
 ```
 
 ## Notes
