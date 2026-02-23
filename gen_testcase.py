@@ -101,15 +101,14 @@ def reverse_dns_lookup(ip):
     try:
         dat = socket.gethostbyaddr(ip)
         return (
-            {"Resolved": True, "Error": "", "Hostnames": dat}
+            {"Resolved": True, "Hostnames": dat}
             if dat and len(dat) > 0
-            else {"Resolved": False, "Error": "No PTR record found", "Hostnames": []}
+            else {"Resolved": False, "Error": "No PTR record found"}
         )
     except Exception as e:
         return {
             "Resolved": False,
             "Error": "Address resolution error: " + str(e),
-            "Host": [],
         }
 
 
@@ -156,13 +155,15 @@ def get_serv_banner(ip, port, t, hostname):
         banner = s.recv(1024).decode(errors="ignore").strip()
         if len(banner) > 0:
             bannerdata = {
-                "IP": ip,
-                "Port": port,
                 "Banner": banner,
                 "Page Title": pt,
-                "SSL Cert": socket_cert,
-                "SSL Version": ssl_version,
-                "Encrypted With": encrypted_with,
+                "Encryption Data": {
+                    "SSL Cert": socket_cert,
+                    "SSL Version": ssl_version,
+                    "Encrypted With": encrypted_with,
+                }
+                if ssl_version != "N/A"
+                else "N/A",
             }
             checked_ips.append(bannerdata)
             s.close()
@@ -173,33 +174,39 @@ def get_serv_banner(ip, port, t, hostname):
             s.close()
             if len(banner) > 0:
                 bannerdata = {
-                    "IP": ip,
-                    "Port": port,
                     "Banner": banner,
                     "Page Title": pt,
-                    "SSL Cert": socket_cert,
-                    "SSL Version": ssl_version,
-                    "Encrypted With": encrypted_with,
+                    "Encryption Data": {
+                        "SSL Cert": socket_cert,
+                        "SSL Version": ssl_version,
+                        "Encrypted With": encrypted_with,
+                    }
+                    if ssl_version != "N/A"
+                    else "N/A",
                 }
                 checked_ips.append(bannerdata)
                 return bannerdata
             else:
                 return {
-                    "IP": ip,
-                    "Port": port,
                     "Page Title": pt,
-                    "SSL Cert": socket_cert,
-                    "SSL Version": ssl_version,
-                    "Encrypted With": encrypted_with,
+                    "Encryption Data": {
+                        "SSL Cert": socket_cert,
+                        "SSL Version": ssl_version,
+                        "Encrypted With": encrypted_with,
+                    }
+                    if ssl_version != "N/A"
+                    else "N/A",
                 }
     except Exception as e:
         nobdat = {
-            "IP": ip,
-            "Port": port,
             "Page Title": pt,
-            "SSL Cert": socket_cert,
-            "SSL Version": ssl_version,
-            "Encrypted With": encrypted_with,
+            "Encryption Data": {
+                "SSL Cert": socket_cert,
+                "SSL Version": ssl_version,
+                "Encrypted With": encrypted_with,
+            }
+            if ssl_version != "N/A"
+            else "N/A",
         }
         checked_ips.append(nobdat)
         return nobdat
@@ -213,13 +220,9 @@ def get_page_title(url, t):
         res.raise_for_status()
         cont = res.content
         soup = BeautifulSoup(cont, "html.parser")
-        return (
-            soup.title.string
-            if soup.title
-            else "Error Fetching title: 200 No webpage title found"
-        )
-    except Exception as e:
-        return "Error fetching title: " + str(e)
+        return soup.title.string if soup.title else "N/A"
+    except Exception:
+        return "N/A"
 
 
 # Write raw packet data to a testcase file
@@ -491,7 +494,10 @@ def parse_pcap(pcap_path, srcp, dstp, tmout, percentage_p, from_p, to_p, thread_
                             "MAC Destination": mac_addr_dst,
                             "MAC Source Vendor": mac_vendor_src,
                             "MAC Destination Vendor": mac_vendor_dst,
-                        },
+                        }
+                        if get_geoip_info(p["IP"].src).get("Location") == "Localnet"
+                        and get_geoip_info(p["IP"].dst).get("Location") == "Localnet"
+                        else "N/A",
                         "IP": {
                             "Source IP": str(p["IP"].src),
                             "Destination IP": str(p["IP"].dst),
