@@ -1,5 +1,6 @@
 testcases/
 all_testcases_info.json
+*.pcap
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
