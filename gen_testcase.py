@@ -270,7 +270,7 @@ def join_info(output_dir, pdir, index, dt_json, pkt_json, perp, host):
     return with_llm
 
 
-def by_host():
+def by_host(out):
     for host in all_info:
         if host.get("Host") not in by_host_dict:
             by_host_dict[host.get("Host")] = []
@@ -446,15 +446,16 @@ def mac_addr_to_vendor(mac):
 
 # Parse .pcap file and generate testcases and info files
 def parse_pcap(pcap_path, srcp, dstp, tmout, percentage_p, from_p, to_p, thread_id):
-    print(
-        "Starting thread "
-        + str(thread_id)
-        + " for packets "
-        + str(from_p)
-        + " to "
-        + str(to_p),
-        file=sys.stderr,
-    )
+    if verbose >= 2:
+        print(
+            "Starting thread "
+            + str(thread_id)
+            + " for packets "
+            + str(from_p)
+            + " to "
+            + str(to_p),
+            file=sys.stderr,
+        )
     s = from_p
     total_pkts = len(scapy.rdpcap(pcap_path))  # type: ignore
     per_pkts = int((percentage_p / 100) * total_pkts)
@@ -580,19 +581,25 @@ def start_threading():
         for t in threads:
             t.join()
         drilldown = " ".join(summaries) if summaries else "No LLM summaries generated."
-        if config.get("final_summary", False) and use_llm:
-            final_res = ollama.generate(
-                model=llm_model,
-                prompt="Provide a concise summary of the following packets, in paragraph form, limited to three paragraphs: "
-                + drilldown,
-            )
-            if final_res and "response" in final_res:
-                print(
-                    "\nFinal LLM Summary of Packet Analyses:\n" + final_res["response"]
+        if config.get("final_summary", True) and config["ollama"].get("use_llm", True):
+            try:
+                final_res = ollama.generate(
+                    model=llm_model,
+                    prompt="Provide a concise summary of the following packets, in paragraph form, limited to three paragraphs: "
+                    + drilldown,
                 )
-                open(outd + "/final_summary.txt", "w").write(final_res["response"])
-            else:
-                print("\nLLM Final summary generation failed or returned no response.")
+                if final_res and "response" in final_res:
+                    print(
+                        "\nFinal LLM Summary of Packet Analyses:\n"
+                        + final_res["response"]
+                    )
+                    open(outd + "/final_summary.txt", "w").write(final_res["response"])
+                else:
+                    print(
+                        "\nLLM Final summary generation failed or returned no response."
+                    )
+            except Exception as e:
+                print("\nLLM Final summary generation error: " + str(e))
 
 
 # Argument parser setup for command-line options
@@ -661,7 +668,6 @@ parser.add_argument(
 verbose = parser.parse_args().verbose
 args = parser.parse_args()
 config = config_loader(args.conf if args.conf else "conf.yaml")
-
 # Load database paths from config and print status
 if config["database_locations"]["geoip"]:
     geodat_path = config["database_locations"]["geoip"]

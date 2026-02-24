@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PCAP Analysis Tool</title>
+
+<!-- Google Font -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rubik+Glitch&display=swap" rel="stylesheet">
+
+<style>
+:root {
+  --color-1: #7f80ff;
+  --color-2: #004085;
+  --color-3: #8a87c0;
+  --color-4: #000000;
+}
+
+/* Page background */
+body {
+  margin: 0;
+  background-color: black;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  font-family: Arial, sans-serif;
+}
+
+/* Outer container */
+.container_box {
+  width: 500px;
+  height: 450px;
+  border: 3px solid var(--color-3);
+  display: flex;
+  flex-direction: column;
+  padding: 15px;
+  box-sizing: border-box;
+}
+
+/* Top title bar */
+.top_bar {
+  height: 40px;
+  background-color: var(--color-1);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border: 1px solid var(--color-4);
+  font-family: 'Rubik Glitch', cursive;
+  font-size: 18pt;
+}
+
+/* Entry bar */
+.entry_bar {
+  height: 60px;
+  background-color: var(--color-2);
+  border: 1px solid var(--color-4);
+  padding: 5px;
+  display: flex;
+  align-items: center;
+  margin-top: 2px;
+  gap: 8px;
+}
+
+.entry_bar input[type="text"] {
+  flex: 1;
+  padding: 5px;
+  background-color: black;
+  color: white;
+  border: 1px solid grey;
+}
+
+/* Content area */
+.content_area {
+  flex: 1;
+  display: flex;
+  margin-top: 5px;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 150px;
+  background-color: var(--color-3);
+  border: 1px solid var(--color-4);
+  padding: 5px;
+  box-sizing: border-box;
+}
+
+.sidebar select {
+  width: 100%;
+  margin-bottom: 5px;
+}
+
+/* Main panel */
+.main_panel {
+  flex: 1;
+  margin-left: 5px;
+  border: 1px solid var(--color-4);
+  background-color: #111;
+  color: white;
+  padding: 5px;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+/* Status bar */
+.status_bar {
+  margin-top: 5px;
+  height: 20px;
+  background-color: black;
+  color: white;
+  border: 1px solid grey;
+  display: flex;
+  align-items: center;
+  padding-left: 5px;
+  font-size: small;
+}
+
+.logo-cont {
+  width: 45px; /* or a percentage, e.g., 100% */
+  height: 45px;
+}
+
+.logo-cont img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover; /* or 'contain' */
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="container_box">
+
+  <div class="top_bar">
+    PCAP Analysis Tool by oxagast
+  </div>
+
+  <div class="entry_bar">
+<div class="logo-cont">
+    <img src="logo.png">
+ </div>
+    <label style="color:white;">ip/hostname:</label>
+    <input type="text" placeholder="Enter IP or hostname">
+  </div>
+
+  <div class="content_area">
+    
+    <div class="sidebar">
+      <!-- Dropdown menus -->
+      <select>
+        <option>Protocol Filter</option>
+        <option>TCP</option>
+        <option>UDP</option>
+        <option>ICMP</option>
+      </select>
+
+      <select>
+        <option>Time Range</option>
+        <option>Last 5 min</option>
+        <option>Last 30 min</option>
+        <option>Full Capture</option>
+      </select>
+    </div>
+
+    <div class="main_panel">
+      Analysis output will appear here...
+    </div>
+
+  </div>
+
+  <div class="status_bar">
+    Status: Ready
+  </div>
+
+</div>
+
+</body>
+</html>
