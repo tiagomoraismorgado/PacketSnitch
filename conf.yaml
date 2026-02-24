@@ -8,6 +8,7 @@ ollama:
   use_llm: true
 #  model: "deepseek-r1:latest"
   model: "minimax-m2.5:cloud"
-  response_length: 200
-  pcap_percentage: 10
+  response_length: 230
+  pcap_percentage: 8
 threads: 4
+final_summary: true

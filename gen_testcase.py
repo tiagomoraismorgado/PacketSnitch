@@ -1,4 +1,5 @@
-# oxagas# Import standard and third-party libraries for argument parsing, file handling, networking, compression, and data processing
+# oxagast
+# Import standard and third-party libraries for argument parsing, file handling, networking, compression, and data processing
 import argparse
 import csv
 import json
@@ -40,6 +41,9 @@ use_llm = False
 llm_model = "minimax-m2.5:cloud"
 nthreads = 6
 threads = []
+summaries = []
+by_host_dict = {}
+all_info = []
 
 
 def llm_query(packet_infos):
@@ -53,6 +57,7 @@ def llm_query(packet_infos):
                 + packet_infos,
             )
             if res and "response" in res:
+                summaries.append(res["response"])
                 return {"Summary": res["response"]}
             else:
                 return {"Summary": ""}
@@ -63,8 +68,6 @@ def llm_query(packet_infos):
 
 
 # Load YAML configuration file
-
-
 def config_loader(filename="conf.yaml"):
     if not os.path.exists(filename):
         print("Error: Configuration file not found!", file=sys.stderr)
@@ -236,7 +239,7 @@ def write_testcase(data, output_dir, pdir, index):
 
 
 # Write packet info and extra info to JSON files
-def write_info(output_dir, pdir, index, dt_json, pkt_json, perp):
+def join_info(output_dir, pdir, index, dt_json, pkt_json, perp, host):
     out = open(
         output_dir + "/" + pdir + "/pcap.info_packet." + str(index) + ".json", "wb"
     )
@@ -258,15 +261,29 @@ def write_info(output_dir, pdir, index, dt_json, pkt_json, perp):
         with_llm = {"Packet": merge_json}
     out.write(json.dumps(merge_json).encode())
     out.close()
-    main = open("all_testcases_info.json", "a")
-    main.write(json.dumps(with_llm) + "\n")
-    main.close()
+    #    main = open("all_testcases_info.json", "a")
+    # main.write(json.dumps(with_llm) + "\n")
+    # main.close()
     if verbose >= 2:
         print(json.dumps(with_llm, indent=2))
+    all_info.append({"Host": host, "Packet": with_llm})
     return with_llm
 
 
+def by_host():
+    for host in all_info:
+        if host.get("Host") not in by_host_dict:
+            by_host_dict[host.get("Host")] = []
+        else:
+            by_host_dict[host.get("Host")].append(host.get("Packet"))
+    open(out + "/all_testcases_info_by_host.json", "w+").write(
+        json.dumps({"Host": by_host_dict}, indent=2)
+    )
+
+
 # Determine IP network class (A/B/C/D/E)
+
+
 def get_netclass(ip):
     fo = int(ip.split(".")[0])
     if 0 <= fo <= 127:
@@ -507,11 +524,10 @@ def parse_pcap(pcap_path, srcp, dstp, tmout, percentage_p, from_p, to_p, thread_
                         "TCP": {
                             "Source port": int(sport),
                             "Destination port": int(dport),
-                            "TCP checksum": int(p["TCP"].chksum),
+                            "TCP checksum": hex(int(p["TCP"].chksum)),
                             "Urgent flag": bool(p["TCP"].urgptr),
                             "TCP Flag Data": {
-                                "List": str(p["TCP"].flags),
-                                "Translated": flag_data if flag_data else "None",
+                                "Flags": flag_data if flag_data else "None",
                             },
                             "Options": list(p["TCP"].options),
                             "TCP layer length": int(p["TCP"].dataofs * 4),
@@ -526,16 +542,57 @@ def parse_pcap(pcap_path, srcp, dstp, tmout, percentage_p, from_p, to_p, thread_
                             "Payload Length": len(raw_d),
                         },
                     }
-                    write_info(
+                    join_info(
                         outd,
                         dport_dir,
                         s,
                         json.dumps(dt_struct).encode(),
                         json.dumps(pkt_struct).encode(),
                         pp,
+                        p["IP"].dst
+                        if get_geoip_info(p["IP"].dst).get("Location") != "Localnet"
+                        else p["IP"].src,
                     )
                     s = s + 1
-    print("Generated " + str(s) + " testcases.", file=sys.stderr)
+
+
+def start_threading():
+    if __name__ == "__main__":
+        for c in range(nthreads):
+            step = int(totalp / nthreads)
+            start = int(c * step) if c != 0 else 0
+            end = int((c + 1) * step) if c != nthreads - 1 else totalp
+            t = threading.Thread(
+                target=parse_pcap,
+                args=(
+                    args.pcap_file,
+                    args.source_port,
+                    args.dest_port,
+                    args.timeout,
+                    pcap_percentage,
+                    start,
+                    end,
+                    c,
+                ),
+            )
+            threads.append(t)
+            t.start()
+        for t in threads:
+            t.join()
+        drilldown = " ".join(summaries) if summaries else "No LLM summaries generated."
+        if config.get("final_summary", False) and use_llm:
+            final_res = ollama.generate(
+                model=llm_model,
+                prompt="Provide a concise summary of the following packets, in paragraph form, limited to three paragraphs: "
+                + drilldown,
+            )
+            if final_res and "response" in final_res:
+                print(
+                    "\nFinal LLM Summary of Packet Analyses:\n" + final_res["response"]
+                )
+                open(outd + "/final_summary.txt", "w").write(final_res["response"])
+            else:
+                print("\nLLM Final summary generation failed or returned no response.")
 
 
 # Argument parser setup for command-line options
@@ -711,6 +768,21 @@ else:
     response_length = 200
     use_llm = False
 
+if llm_model and use_llm and verbose >= 1:
+    if llm_model.endswith(":cloud"):
+        print(
+            "Using cloud-based LLM model: "
+            + llm_model
+            + ". Ensure you have network connectivity and API access.",
+            file=sys.stderr,
+        )
+        if nthreads > 4:
+            nthreads = 4
+            print(
+                "Limiting threads to 4 to prevent excessive API calls to cloud LLM.",
+                file=sys.stderr,
+            )
+
 
 print(
     "Preparing to process "
@@ -726,29 +798,8 @@ if not os.path.exists(args.pcap_file):
     sys.exit(1)
 if not os.path.exists(outd):
     os.mkdir(outd)
-    if __name__ == "__main__":
-        for c in range(nthreads):
-            step = int(totalp / nthreads)
-            start = int(c * step) if c != 0 else 0
-            end = int((c + 1) * step) if c != nthreads - 1 else totalp
-            t = threading.Thread(
-                target=parse_pcap,
-                args=(
-                    args.pcap_file,
-                    args.source_port,
-                    args.dest_port,
-                    args.timeout,
-                    pcap_percentage,
-                    start,
-                    end,
-                    c,
-                ),
-            )
-            threads.append(t)
-            t.start()
-        for t in threads:
-            t.join()
-    sys.exit(0)
+    start_threading()
+
 else:
     if (
         input(
@@ -766,29 +817,11 @@ else:
         # Small delay to ensure file system has completed deletions
         time.sleep(1)
         os.mkdir(outd)
-        if __name__ == "__main__":
-            for c in range(nthreads):
-                step = int(totalp / nthreads)
-                start = int(c * step) if c != 0 else 0
-                end = int((c + 1) * step) if c != nthreads - 1 else totalp
-                t = threading.Thread(
-                    target=parse_pcap,
-                    args=(
-                        args.pcap_file,
-                        args.source_port,
-                        args.dest_port,
-                        args.timeout,
-                        pcap_percentage,
-                        start,
-                        end,
-                        c,
-                    ),
-                )
-                threads.append(t)
-                t.start()
-            for t in threads:
-                t.join()
-        sys.exit(0)
-    except Exception as e:
-        print("Error clearing output directory: " + str(e), file=sys.stderr)
-        sys.exit(1)
+        start_threading()
+        by_host(outd)
+    finally:
+        print(
+            "Processing complete. Generated testcases and info files are located in: "
+            + outd,
+            file=sys.stderr,
+        )
