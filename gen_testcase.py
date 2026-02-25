@@ -25,6 +25,7 @@ import yaml
 from bs4 import BeautifulSoup
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 from scipy.stats import entropy
+from tqdm import tqdm
 
 # Try importing scapy for packet parsing
 try:
@@ -51,10 +52,9 @@ def llm_query(packet_infos):
         if ollama and use_llm:
             res = ollama.generate(
                 model=llm_model,
-                prompt="Give a sub "
-                + str(response_length)
-                + " word analysis of the following packet in paragraph form: "
-                + packet_infos,
+                prompt="Tell me what you can about this network packet (encoded in json, from pcap),"
+                "its payload, and any interesting or unusual traits: " + packet_infos,
+                options={"num_predict": response_length},
             )
             if res and "response" in res:
                 summaries.append(res["response"])
@@ -241,7 +241,7 @@ def write_testcase(data, output_dir, pdir, index):
 # Write packet info and extra info to JSON files
 def join_info(output_dir, pdir, index, dt_json, pkt_json, perp, host):
     out = open(
-        output_dir + "/" + pdir + "/pcap.info_packet." + str(index) + ".json", "wb"
+        output_dir + "/" + pdir + "/pcap.info_packet." + str(index) + ".json", "wb+"
     )
     merge_json = {
         "Packet Info": json.loads(pkt_json),
@@ -250,24 +250,24 @@ def join_info(output_dir, pdir, index, dt_json, pkt_json, perp, host):
     # checking modulo of of the index to determine whether to query the LLM for
     # analysis to avoid excessive API calls while still providing insights on
     # a subset of packets
-    pkt_num = int(index)
-    if pkt_num % perp == 0:
-        llm_info = llm_query(json.dumps(merge_json))
-        if llm_info and "Summary" in llm_info and llm_info["Summary"] != "":
-            with_llm = {"Packet": merge_json, "Analysis": llm_info}
-        else:
-            with_llm = {"Packet": merge_json}
+    llm_info = llm_query(json.dumps(merge_json))
+    if (
+        llm_info
+        and "Summary" in llm_info
+        and (llm_info["Summary"] != "" and "Error" not in llm_info["Summary"])
+    ):
+        merge_json = {"Packet": merge_json, "Analysis": llm_info}
     else:
-        with_llm = {"Packet": merge_json}
+        merge_json = {"Packet": merge_json}
     out.write(json.dumps(merge_json).encode())
     out.close()
     #    main = open("all_testcases_info.json", "a")
     # main.write(json.dumps(with_llm) + "\n")
     # main.close()
     if verbose >= 2:
-        print(json.dumps(with_llm, indent=2))
-    all_info.append({"Host": host, "Packet": with_llm})
-    return with_llm
+        print(json.dumps(merge_json, indent=2))
+    all_info.append({"Host": host, "Packet": merge_json})
+    return merge_json
 
 
 def by_host(out):
@@ -282,8 +282,6 @@ def by_host(out):
 
 
 # Determine IP network class (A/B/C/D/E)
-
-
 def get_netclass(ip):
     fo = int(ip.split(".")[0])
     if 0 <= fo <= 127:
@@ -444,6 +442,104 @@ def mac_addr_to_vendor(mac):
                     return row["Vendor Name"]
 
 
+def packet_loop(p, from_p, pcap_path, percentage_p, srcp, dstp, tmout):
+    total_pkts = len(scapy.rdpcap(pcap_path))  # type: ignore
+    per_pkts = int((percentage_p / 100) * total_pkts)
+    pp = int((percentage_p / 100) * per_pkts)
+    s = from_p
+    mac_addr_src = p.src if p.haslayer("Ethernet") else "N/A"
+    mac_addr_dst = p.dst if p.haslayer("Ethernet") else "N/A"
+    mac_vendor_src = (
+        mac_addr_to_vendor(mac_addr_src) if mac_addr_src != "N/A" else "N/A"
+    )
+    mac_vendor_dst = (
+        mac_addr_to_vendor(mac_addr_dst) if mac_addr_dst != "N/A" else "N/A"
+    )
+    if p.haslayer("TCP"):
+        raw_d = p["TCP"].payload.original
+        sport = p["TCP"].sport
+        dport = p["TCP"].dport
+        dport_dir = str(dport)
+        if (srcp is None or sport == srcp) and (dstp is None or dport == dstp):
+            if raw_d is not None and len(raw_d) > 0:
+                write_testcase(raw_d, outd, dport_dir, s)
+                dt_struct = get_datatypes(raw_d, dport, p["IP"].src, p["IP"].dst, tmout)
+                timestamp = datetime.fromtimestamp(float(Decimal(p.time))).strftime(
+                    "%Y-%m-%d %H:%M:%S.%f"
+                )
+                flag_data = ""
+                if p["TCP"].flags.S:
+                    flag_data += "SYN|"
+                if p["TCP"].flags.A:
+                    flag_data += "ACK|"
+                if p["TCP"].flags.F:
+                    flag_data += "FIN|"
+                if p["TCP"].flags.R:
+                    flag_data += "RST|"
+                if p["TCP"].flags.P:
+                    flag_data += "PSH|"
+                if p["TCP"].flags.U:
+                    flag_data += "URG|"
+                if p["TCP"].flags.ECE:
+                    flag_data += "ECE|"
+                if p["TCP"].flags.CWR:
+                    flag_data += "CWR|"
+                if flag_data.endswith("|"):
+                    flag_data = flag_data[:-1]
+
+                pkt_struct = {
+                    "Packet Processed": int(s),
+                    "Packet Timestamp": timestamp,
+                    "Ethernet Frame": {
+                        "MAC Source": mac_addr_src,
+                        "MAC Destination": mac_addr_dst,
+                        "MAC Source Vendor": mac_vendor_src,
+                        "MAC Destination Vendor": mac_vendor_dst,
+                    }
+                    if get_geoip_info(p["IP"].src).get("Location") == "Localnet"
+                    and get_geoip_info(p["IP"].dst).get("Location") == "Localnet"
+                    else "N/A",
+                    "IP": {
+                        "Source IP": str(p["IP"].src),
+                        "Destination IP": str(p["IP"].dst),
+                        "IP Checksum": hex(int(p["IP"].chksum)),
+                        "IP layer length": int(p["IP"].len),
+                    },
+                    "TCP": {
+                        "Source port": int(sport),
+                        "Destination port": int(dport),
+                        "TCP checksum": hex(int(p["TCP"].chksum)),
+                        "Urgent flag": bool(p["TCP"].urgptr),
+                        "TCP Flag Data": {
+                            "Flags": flag_data if flag_data else "None",
+                        },
+                        "Options": list(p["TCP"].options),
+                        "TCP layer length": int(p["TCP"].dataofs * 4),
+                        "Wire length": len(p["TCP"]),
+                    },
+                    "Raw data": {
+                        "Payload": {
+                            "Hex Encoded": raw_d.hex(),
+                            "ASCII Encoded": raw_d.decode(errors="ignore"),
+                        },
+                        "Packet": bytes(p).hex(),
+                        "Payload Length": len(raw_d),
+                    },
+                }
+                join_info(
+                    outd,
+                    dport_dir,
+                    s,
+                    json.dumps(dt_struct).encode(),
+                    json.dumps(pkt_struct).encode(),
+                    pp,
+                    p["IP"].dst
+                    if get_geoip_info(p["IP"].dst).get("Location") != "Localnet"
+                    else p["IP"].src,
+                )
+                s = s + 1
+
+
 # Parse .pcap file and generate testcases and info files
 def parse_pcap(pcap_path, srcp, dstp, tmout, percentage_p, from_p, to_p, thread_id):
     if verbose >= 2:
@@ -456,105 +552,16 @@ def parse_pcap(pcap_path, srcp, dstp, tmout, percentage_p, from_p, to_p, thread_
             + str(to_p),
             file=sys.stderr,
         )
-    s = from_p
-    total_pkts = len(scapy.rdpcap(pcap_path))  # type: ignore
-    per_pkts = int((percentage_p / 100) * total_pkts)
-    pp = int((percentage_p / 100) * per_pkts)
+        time.sleep(1)
     packets = scapy.rdpcap(pcap_path)  # type: ignore
-    for p in packets[int(from_p) : int(to_p)]:
-        mac_addr_src = p.src if p.haslayer("Ethernet") else "N/A"
-        mac_addr_dst = p.dst if p.haslayer("Ethernet") else "N/A"
-        mac_vendor_src = (
-            mac_addr_to_vendor(mac_addr_src) if mac_addr_src != "N/A" else "N/A"
-        )
-        mac_vendor_dst = (
-            mac_addr_to_vendor(mac_addr_dst) if mac_addr_dst != "N/A" else "N/A"
-        )
-        if p.haslayer("TCP"):
-            raw_d = p["TCP"].payload.original
-            sport = p["TCP"].sport
-            dport = p["TCP"].dport
-            dport_dir = str(dport)
-            if (srcp is None or sport == srcp) and (dstp is None or dport == dstp):
-                if raw_d is not None and len(raw_d) > 0:
-                    write_testcase(raw_d, outd, dport_dir, s)
-                    dt_struct = get_datatypes(
-                        raw_d, dport, p["IP"].src, p["IP"].dst, tmout
-                    )
-                    timestamp = datetime.fromtimestamp(float(Decimal(p.time))).strftime(
-                        "%Y-%m-%d %H:%M:%S.%f"
-                    )
-                    flag_data = ""
-                    if p["TCP"].flags.S:
-                        flag_data += "SYN|"
-                    if p["TCP"].flags.A:
-                        flag_data += "ACK|"
-                    if p["TCP"].flags.F:
-                        flag_data += "FIN|"
-                    if p["TCP"].flags.R:
-                        flag_data += "RST|"
-                    if p["TCP"].flags.P:
-                        flag_data += "PSH|"
-                    if p["TCP"].flags.U:
-                        flag_data += "URG|"
-                    if p["TCP"].flags.ECE:
-                        flag_data += "ECE|"
-                    if p["TCP"].flags.CWR:
-                        flag_data += "CWR|"
-                    if flag_data.endswith("|"):
-                        flag_data = flag_data[:-1]
-
-                    pkt_struct = {
-                        "Packet Processed": int(s),
-                        "Packet Timestamp": timestamp,
-                        "Ethernet Frame": {
-                            "MAC Source": mac_addr_src,
-                            "MAC Destination": mac_addr_dst,
-                            "MAC Source Vendor": mac_vendor_src,
-                            "MAC Destination Vendor": mac_vendor_dst,
-                        }
-                        if get_geoip_info(p["IP"].src).get("Location") == "Localnet"
-                        and get_geoip_info(p["IP"].dst).get("Location") == "Localnet"
-                        else "N/A",
-                        "IP": {
-                            "Source IP": str(p["IP"].src),
-                            "Destination IP": str(p["IP"].dst),
-                            "IP Checksum": hex(int(p["IP"].chksum)),
-                            "IP layer length": int(p["IP"].len),
-                        },
-                        "TCP": {
-                            "Source port": int(sport),
-                            "Destination port": int(dport),
-                            "TCP checksum": hex(int(p["TCP"].chksum)),
-                            "Urgent flag": bool(p["TCP"].urgptr),
-                            "TCP Flag Data": {
-                                "Flags": flag_data if flag_data else "None",
-                            },
-                            "Options": list(p["TCP"].options),
-                            "TCP layer length": int(p["TCP"].dataofs * 4),
-                            "Wire length": len(p["TCP"]),
-                        },
-                        "Raw data": {
-                            "Payload": {
-                                "Hex Encoded": raw_d.hex(),
-                                "ASCII Encoded": raw_d.decode(errors="ignore"),
-                            },
-                            "Packet": bytes(p).hex(),
-                            "Payload Length": len(raw_d),
-                        },
-                    }
-                    join_info(
-                        outd,
-                        dport_dir,
-                        s,
-                        json.dumps(dt_struct).encode(),
-                        json.dumps(pkt_struct).encode(),
-                        pp,
-                        p["IP"].dst
-                        if get_geoip_info(p["IP"].dst).get("Location") != "Localnet"
-                        else p["IP"].src,
-                    )
-                    s = s + 1
+    if verbose >= 2:
+        for p in packets[int(from_p) : int(to_p)]:
+            packet_loop(p, from_p, pcap_path, percentage_p, srcp, dstp, tmout)
+    else:
+        for p in tqdm(
+            packets[int(from_p) : int(to_p)], position=0, desc="Processing PCAP"
+        ):
+            packet_loop(p, from_p, pcap_path, percentage_p, srcp, dstp, tmout)
 
 
 def start_threading():
@@ -774,20 +781,24 @@ else:
     response_length = 200
     use_llm = False
 
-if llm_model and use_llm and verbose >= 1:
+if llm_model and use_llm:
     if llm_model.endswith(":cloud"):
-        print(
-            "Using cloud-based LLM model: "
-            + llm_model
-            + ". Ensure you have network connectivity and API access.",
-            file=sys.stderr,
-        )
+        if verbose >= 2:
+            print(
+                "Using cloud-based LLM model: "
+                + llm_model
+                + ". Ensure you have network connectivity and API access.",
+                file=sys.stderr,
+            )
         if nthreads > 4:
             nthreads = 4
             print(
-                "Limiting threads to 4 to prevent excessive API calls to cloud LLM.",
+                "Limiting concurrency to 4 threads to prevent excessive API calls to cloud LLM.",
                 file=sys.stderr,
             )
+    if nthreads > 2:
+        nthreads = 2
+        print("Limiting concurrency to 2 threads to prevent hammering the local LLM")
 
 
 print(
@@ -816,8 +827,6 @@ else:
         print("Exiting to prevent overwriting files.", file=sys.stderr)
         sys.exit(1)
     try:
-        if os.path.exists("all_testcases_info.json"):
-            os.remove("all_testcases_info.json")
         if os.path.isdir(outd):
             shutil.rmtree(outd, ignore_errors=True)
         # Small delay to ensure file system has completed deletions

@@ -1,6 +1,6 @@
 :root {
   --color-1: #7f80ff;
-  --color-2: #004085;
+  --color-2: #003b7a;
   --color-3: #8a87c0;
   --color-4: #000000;
 }
@@ -101,7 +101,7 @@ body {
   overflow-y: auto;
 }
 
-.custom-pcap-upload {
+.custom-upload {
   background-color: var(--color-3); /* Green */
   border: none;
   color: white;
