@@ -63,15 +63,6 @@
         </div>
 
         <div id="main" class="main_panel">
-          <table class="main_panel" id="packet_space">
-            <thead>
-              <tr>
-                <th>Packet Info</th>
-                <th>Details</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
           Choose a json decode using the button to the left.
         </div>
       </div>
@@ -102,9 +93,10 @@
       function build_table(h1, h2) {
         const main_panel = document.getElementById("main");
 
-        main_panel.textContent = "";
         main_panel.innerHTML =
-          '<table class="main_panel" id="packet_space"><thead><tr><th>' +
+          final_summary +
+          "<br><br><hr><br>" +
+          '<table width=80% class="main_panel" id="packet_space"><thead><tr><th width=25%>' +
           h1 +
           "</th><th>" +
           h2 +
@@ -170,7 +162,6 @@
           const selected = document.getElementById("target_hosts").value;
           const host_filter = document.getElementById("host_filter");
           const main_panel = document.getElementById("main");
-          build_table("Packet Info", "Details");
           const packet_space = document.getElementById("packet_space");
           if (host_filter.value !== selected) {
             host_filter.value = selected;
@@ -178,6 +169,7 @@
           if (selected === "ALL hosts") {
             host_filter.value = "0.0.0.0";
           }
+          build_table("Packet Info", "Details");
           const hostPackets = packets["Host"][selected];
           for (const packet in hostPackets) {
             if (packet !== "Summary") {
@@ -202,7 +194,7 @@
                       const tcpInfo = packetInfo[info];
                       if (tcpInfo["TCP Flag Data"]) {
                         flags = tcpInfo["TCP Flag Data"]["Flags"];
-                        addRow("TCP Flags", "[ " + flags + " ]");
+                        addRow("TCP Flags", flags);
                       }
                       // iterate over the rest of hte keys in tcpInfo and add them to the table
                       if (
@@ -211,6 +203,8 @@
                       ) {
                         addRow("Source Port", tcpInfo["Source port"]);
                         addRow("Destination Port", tcpInfo["Destination port"]);
+                        addRow("Urgent flag", tcpInfo["Urgent flag"]);
+                        addRow("TCP Checksum", tcpInfo["TCP checksum"]);
                         console.log(
                           "Added TCP port information for " + selected,
                         );
@@ -222,6 +216,7 @@
                       }, 3000);
                     }
                   }
+                  addRow("***", "***");
                 }
               }
             }
