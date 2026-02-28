@@ -26,9 +26,8 @@
  * ```
  */
 
-import './assets/css/style.css';
-import './assets/scripts/scripts.js'
-//import './assets/images/logo.webp'
+import "./assets/css/style.css";
+import "./assets/scripts/scripts.js";
 console.log(
   '👋 This message is being logged by "renderer.js", included via webpack',
 );
