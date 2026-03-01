@@ -32,7 +32,7 @@ function output_frame(h1, h2) {
       h2 +
       "</th></tr></thead><tbody></tbody></table></div>";
   }
-  if (format_selection === "JSON") {
+  if (format_selection === "Pretty JSON") {
     main_panel.textContent = "";
     main_panel.innerHTML =
       "<h2>Capture Analysis:</h2>" +
@@ -246,4 +246,25 @@ document.getElementById("target_hosts").addEventListener("change", function () {
 document.getElementById("summary-btn").addEventListener("click", function () {
   document.getElementById("main").innerHTML =
     "<h2>Capture Analysis:</h2>" + final_summary + "<br><hr>";
+});
+
+// Example function to run the binary
+function runMyBinary() {
+  // Be sure to make the path absolute
+  const command = `"${path.resolve(binaryPath)}"`;
+
+  exec(command, (error, stdout, stderr) => {
+    if (error) {
+      console.error(`exec error: ${error}`);
+      return;
+    }
+    console.log(`stdout: ${stdout}`);
+    console.error(`stderr: ${stderr}`);
+  });
+}
+
+// Call this function when needed, e.g., after the app is ready
+app.on("ready", () => {
+  // ... create window ...
+  runMyBinary();
 });
