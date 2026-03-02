@@ -3,7 +3,7 @@ all_testcases_info.json
 *.pcap
 Main/Frontend/out
 Main/Frontend/Backend/snitch
-
+snitch
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
