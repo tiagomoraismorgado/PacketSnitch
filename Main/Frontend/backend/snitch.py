@@ -17,10 +17,10 @@ import chardet
 import geoip2.database
 import magic
 import threading
-import random
 import numpy as np
 import requests
 import ollama
+from ollama import ResponseError
 import yaml
 from bs4 import BeautifulSoup
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
@@ -38,7 +38,7 @@ except ImportError:
 checked_ips = []
 ar = "False"
 percentage_pcap = 10
-response_length = 210  # words
+response_length = 100
 use_llm = False
 llm_model = "minimax-m2.5:cloud"
 nthreads = 6
@@ -50,22 +50,31 @@ pktnum = 0
 
 
 def llm_query(packet_infos):
+    if verbose == 0:
+        print(".", end="", flush=True)
     try:
-        if ollama and use_llm:
-            res = ollama.generate(
-                model=llm_model,
-                prompt="Tell me what you can about the following network capture (encoded in json, from pcap),"
-                "its payload, and any interesting or unusual traits... respond with a single paragraph around "
-                + response_length
-                + " words: "
-                + packet_infos,
-            )
-            if res and "response" in res:
-                print(".", end="", flush=True)
-                summaries.append(res["response"])
-                return {"Summary": res["response"]}
-            else:
-                return {"Summary": ""}
+        if ollama and use_llm and packet_infos and packet_infos.length > 100:
+            for resc in range(2):
+                try:
+                    print(".", end="", flush=True)
+                    res = ollama.generate(
+                        model=llm_model,
+                        prompt=f"Tell me what you can about the following network capture (encoded in json, from pcap), its payload, and any interesting or unusual traits... respond with a single paragraph around {response_length} words: {packet_infos}",
+                    )
+                    if res and "response" in res:
+                        if verbose == 0:
+                            print(".", end="", flush=True)
+                        summaries.append(res["response"])
+                        return {"Summary": res["response"]}
+                    else:
+                        return {"Summary": ""}
+                except ResponseError as re:
+                    if verbose >= 2:
+                        print(
+                            f"LLM API response error (attempt {resc + 1}/3): {str(re)}",
+                            file=sys.stderr,
+                        )
+                    time.sleep(2**resc)  # Exponential backoff
         else:
             return {"Summary": "LLM integration not enabled"}
     except Exception as e:
@@ -83,6 +92,8 @@ def config_loader(filename="conf.yaml"):
 
 # Lookup port description from ICANN CSV database
 def get_port_description(port, protocol="tcp"):
+    if verbose == 0:
+        print(".", end="", flush=True)
     if not os.path.exists(icann_csv_path):
         print("Error: ICANN port description database file not found!", file=sys.stderr)
         return "ICANN port description file not found!"
@@ -106,6 +117,8 @@ def get_port_description(port, protocol="tcp"):
 
 # Perform reverse DNS lookup for an IP address
 def reverse_dns_lookup(ip):
+    if verbose == 0:
+        print(".", end="", flush=True)
     try:
         dat = socket.gethostbyaddr(ip)
         return (
@@ -122,6 +135,8 @@ def reverse_dns_lookup(ip):
 
 # Fetch server banner and SSL certificate information for a given IP and port
 def get_serv_banner(ip, port, t, hostname):
+    if verbose == 0:
+        print(".", end="", flush=True)
     socket_cert = "Unavailable"
     encrypted_with = "N/A"
     ssl_version = "N/A"
@@ -222,6 +237,8 @@ def get_serv_banner(ip, port, t, hostname):
 
 # Fetch the page title from a URL
 def get_page_title(url, t):
+    if verbose == 0:
+        print(".", end="", flush=True)
     try:
         requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
         res = requests.get(url, timeout=t, verify=False)
@@ -235,6 +252,8 @@ def get_page_title(url, t):
 
 # Write raw packet data to a testcase file
 def write_testcase(data, output_dir, pdir, index):
+    if verbose == 0:
+        print(".", end="", flush=True)
     if not os.path.exists(output_dir + "/" + pdir):
         os.mkdir(output_dir + "/" + pdir)
     out = open(
@@ -245,6 +264,8 @@ def write_testcase(data, output_dir, pdir, index):
 
 # Write packet info and extra info to JSON files
 def join_info(output_dir, pdir, index, dt_json, pkt_json, perp, host):
+    if verbose == 0:
+        print(".", end="", flush=True)
     out = open(
         output_dir + "/" + pdir + "/pcap.info_packet." + str(index) + ".json", "wb+"
     )
@@ -252,25 +273,8 @@ def join_info(output_dir, pdir, index, dt_json, pkt_json, perp, host):
         "Packet Info": json.loads(pkt_json),
         "Extra Info": json.loads(dt_json),
     }
-    # checking modulo of of the index to determine whether to query the LLM for
-    # analysis to avoid excessive API calls while still providing insights on
-    # a subset of packets
-    # llm_info = llm_query(json.dumps(merge_json))
-    # print(llm_info)
-    # if (
-    #    llm_info
-    #    and "Summary" in llm_info
-    #    and (llm_info["Summary"] != "" and "Error" not in llm_info["Summary"])
-    # ):
-    #    with_llm = {"Packet": merge_json, "Analysis": llm_info}
-    # else:
-    #    with_llm = {"Packet": merge_json}
     out.write(json.dumps(merge_json).encode())
     out.close()
-
-    #    main = open("all_testcases_info.json", "a")
-    # main.write(json.dumps(with_llm) + "\n")
-    # main.close()
     if verbose >= 2:
         print(json.dumps(merge_json, indent=2))
     all_info.append({"Host": host, "Packet": merge_json})
@@ -279,6 +283,8 @@ def join_info(output_dir, pdir, index, dt_json, pkt_json, perp, host):
 
 
 def by_host(out, final_summary):
+    if verbose == 0:
+        print(".", end="", flush=True)
     for host in all_info:
         if host.get("Host") not in by_host_dict:
             by_host_dict[host.get("Host")] = []
@@ -291,6 +297,8 @@ def by_host(out, final_summary):
 
 # Determine IP network class (A/B/C/D/E)
 def get_netclass(ip):
+    if verbose == 0:
+        print(".", end="", flush=True)
     fo = int(ip.split(".")[0])
     if 0 <= fo <= 127:
         return "A"
@@ -304,6 +312,8 @@ def get_netclass(ip):
 
 # Safely decompress data using zlib/gzip
 def safe_decompress(compressed_data):
+    if verbose == 0:
+        print(".", end="", flush=True)
     # Initialize decompressor
     # Handle gzip and zlib formats
     dco = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16)
@@ -318,6 +328,8 @@ def safe_decompress(compressed_data):
 
 # Get GeoIP information for an IP address
 def get_geoip_info(ip):
+    if verbose == 0:
+        print(".", end="", flush=True)
     if not os.path.exists(geodat_path):
         return {"Location": "Error: GeoIP database not found!"}
     try:
@@ -342,6 +354,8 @@ def get_datatypes(data, dport, srcip, destip, tmout):
     dedata = ""
     compressedd = {"Decompressed": False}
     for ln in data.splitlines():
+        if verbose == 0:
+            print(".", end="", flush=True)
         descs.append(magic.from_buffer(ln))
         dedata = safe_decompress(ln)
         if dedata and len(dedata) > 0:
@@ -370,6 +384,8 @@ def get_datatypes(data, dport, srcip, destip, tmout):
 
 # Get service name for a port using socket library
 def get_serv(port, protocol="tcp"):
+    if verbose == 0:
+        print(".", end="", flush=True)
     try:
         serv_name = socket.getservbyport(port, protocol)
         return serv_name
@@ -379,6 +395,8 @@ def get_serv(port, protocol="tcp"):
 
 # Extract traits from packet data (entropy, network info, banners, charset, etc.)
 def get_traits(data, dport, srcip, destip, timeout):
+    if verbose == 0:
+        print(".", end="", flush=True)
     counts = np.bincount(list(data))
     entop = entropy(counts, base=2)
     data_len = len(data)
@@ -439,6 +457,8 @@ def get_traits(data, dport, srcip, destip, timeout):
 
 # Lookup MAC address vendor from CSV database
 def mac_addr_to_vendor(mac):
+    if verbose == 0:
+        print(".", end="", flush=True)
     if not os.path.exists(mac_vendors_path):
         print("Error: MAC vendor database file not found!", file=sys.stderr)
         return "Error: MAC vendor file not found!"
@@ -564,16 +584,24 @@ def parse_pcap(pcap_path, srcp, dstp, tmout, percentage_p, from_p, to_p, thread_
         time.sleep(1)
     packets = scapy.rdpcap(pcap_path)  # type: ignore
     for p in packets[int(from_p) : int(to_p)]:
-        print(".", end="", flush=True)
+        if verbose == 0:
+            print(".", end="", flush=True)
         packet_loop(p, from_p, pcap_path, percentage_p, srcp, dstp, tmout)
         # for every 10 packets processed, add all 10 to a string to send to llm for batch analysis to generate insights on the traffic in the capture as a whole and add that analysis to the json of each packet in the batch
 
 
 def information_seive():
-    batch_size = 3
+    batch_size = 4
     # iterate over a batch of 5 summaries and concatenate them into a single string to send to the LLM for a final analysis of the capture as a whole, generating insights on the traffic in the capture and adding that analysis to a final summary section in the all_testcases_info_by_host.json file
     for i in range(0, len(summaries), batch_size):
         batch = summaries[i : i + batch_size]
+        if verbose == 0:
+            print(".", end="", flush=True)
+        if verbose >= 2:
+            print(
+                f"\nProcessing batch {i // batch_size + 1} of {len(summaries) // batch_size + (1 if len(summaries) % batch_size > 0 else 0)} for LLM analysis...",
+                file=sys.stderr,
+            )
         t = threading.Thread(
             target=llm_query,
             args=(" ".join(batch),),
@@ -614,7 +642,7 @@ def start_threading():
             t.start()
         for t in threads:
             t.join()
-        information_seive()
+            information_seive()
         drilldown = " ".join(summaries) if summaries else "No LLM summaries generated."
         if config.get("final_summary", True) and config["ollama"].get("use_llm", True):
             try:
@@ -763,36 +791,21 @@ else:
             file=sys.stderr,
         )
 totalp = 0
-#   for pkt in scapy.rdpcap(args.pcap_file):  # type: ignore
-#    if pkt.haslayer("TCP"):
-#        if (
-#            pkt["TCP"].dport == args.dest_port
-#            or pkt["TCP"].sport == args.source_port
-#    ):
-#            totalp = totalp + 1
-# totalp should equal the number of TCP (only) packets in the capture that match the port filters specified by the user, if any, or all packets if no port filters are specified. This is used to determine how many packets will be processed and to provide progress updates.
 packets = scapy.rdpcap(args.pcap_file)  # type: ignore
 # The PacketList object provides a summary of included protocols
-# print(f"Packet summary: {packets.summary()}")
 # Use len() to get the total number of packets in the file
 total_packets = len(packets)
-# print(f"Total number of packets in the file: {total_packets}")
-
 # To count specifically TCP packets using a filter function:
 totalp = len([p for p in packets if p.haslayer("TCP")])
-
 if totalp == 0:
     print("No packets found matching the specified port filters.", file=sys.stderr)
     exit(1)
-
 if "threads" in config and config["threads"]:
     nthreads = config["threads"]
-
 outd = "testcases"
 if args.output and args.output != "testcases":
     outd = args.output
     print("Using output directory: " + args.output, file=sys.stderr)
-
 if "output_dir" in config:
     outd = config["output_dir"]
     print("Using output directory from config: " + outd, file=sys.stderr)
@@ -819,7 +832,6 @@ else:
     llm_model = "minimax-m2.5:cloud"
     response_length = 200
     use_llm = False
-
 if llm_model and use_llm:
     if llm_model.endswith(":cloud"):
         if verbose >= 2:
@@ -829,8 +841,6 @@ if llm_model and use_llm:
                 + ". Ensure you have network connectivity and API access.",
                 file=sys.stderr,
             )
-
-
 print(
     "Preparing to process "
     + str(totalp)
@@ -844,9 +854,13 @@ if not os.path.exists(args.pcap_file):
     print("The .pcap file does not exist.", file=sys.stderr)
     sys.exit(1)
 if not os.path.exists(outd):
-    os.mkdir(outd)
-    final_s = start_threading()
-    by_host(outd, final_s)
+    try:
+        os.mkdir(outd)
+        final_s = start_threading()
+        by_host(outd, final_s)
+    except Exception as e:
+        final_s = start_threading()
+        by_host(outd, final_s)
 else:
     if (
         input(
@@ -861,9 +875,13 @@ else:
             shutil.rmtree(outd, ignore_errors=True)
         # Small delay to ensure file system has completed deletions
         time.sleep(1)
-        os.mkdir(outd)
-        final_s = start_threading()
-        by_host(outd, final_s)
+        try:
+            os.mkdir(outd)
+            final_s = start_threading()
+            by_host(outd, final_s)
+        except Exception as e:
+            final_s = start_threading()
+            by_host(outd, final_s)
     finally:
         print(
             "Processing complete. Generated testcases and info files are located in: "
