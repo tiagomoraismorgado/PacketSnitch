@@ -10,6 +10,6 @@ ollama:
   #  model: "deepseek-r1:latest"
   model: "minimax-m2.5:cloud"
 #  model: "mistral-large-3:675b-cloud"
-  response_length: 200
-threads: 5
+  response_length: 260
+threads: 12
 final_summary: true

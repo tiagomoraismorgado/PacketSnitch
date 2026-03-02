@@ -26,6 +26,7 @@ from bs4 import BeautifulSoup
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 from scipy.stats import entropy
 from tqdm import tqdm
+from threading import Thread
 
 # Try importing scapy for packet parsing
 try:
@@ -37,7 +38,7 @@ except ImportError:
 checked_ips = []
 ar = "False"
 percentage_pcap = 10
-response_length = 100
+response_length = 210  # words
 use_llm = False
 llm_model = "minimax-m2.5:cloud"
 nthreads = 6
@@ -53,11 +54,14 @@ def llm_query(packet_infos):
         if ollama and use_llm:
             res = ollama.generate(
                 model=llm_model,
-                prompt="Tell me what you can about this network packet (encoded in json, from pcap),"
-                "its payload, and any interesting or unusual traits... respond with a single paragraph around 260 words: "
+                prompt="Tell me what you can about the following network capture (encoded in json, from pcap),"
+                "its payload, and any interesting or unusual traits... respond with a single paragraph around "
+                + response_length
+                + " words: "
                 + packet_infos,
             )
             if res and "response" in res:
+                print(".", end="", flush=True)
                 summaries.append(res["response"])
                 return {"Summary": res["response"]}
             else:
@@ -263,12 +267,14 @@ def join_info(output_dir, pdir, index, dt_json, pkt_json, perp, host):
     #    with_llm = {"Packet": merge_json}
     out.write(json.dumps(merge_json).encode())
     out.close()
+
     #    main = open("all_testcases_info.json", "a")
     # main.write(json.dumps(with_llm) + "\n")
     # main.close()
     if verbose >= 2:
         print(json.dumps(merge_json, indent=2))
     all_info.append({"Host": host, "Packet": merge_json})
+    summaries.append(json.dumps(merge_json))
     return merge_json
 
 
@@ -539,8 +545,8 @@ def packet_loop(p, from_p, pcap_path, percentage_p, srcp, dstp, tmout):
                     if get_geoip_info(p["IP"].dst).get("Location") != "Localnet"
                     else p["IP"].src,
                 )
-                return data_back
                 s = s + 1
+                return data_back
 
 
 # Parse .pcap file and generate testcases and info files
@@ -558,28 +564,34 @@ def parse_pcap(pcap_path, srcp, dstp, tmout, percentage_p, from_p, to_p, thread_
         time.sleep(1)
     packets = scapy.rdpcap(pcap_path)  # type: ignore
     for p in packets[int(from_p) : int(to_p)]:
-        batch_size = 6
-        packet_data = packet_loop(p, from_p, pcap_path, percentage_p, srcp, dstp, tmout)
+        print(".", end="", flush=True)
+        packet_loop(p, from_p, pcap_path, percentage_p, srcp, dstp, tmout)
         # for every 10 packets processed, add all 10 to a string to send to llm for batch analysis to generate insights on the traffic in the capture as a whole and add that analysis to the json of each packet in the batch
-        if packet_data and len(all_info) % batch_size == 0 and len(all_info) > 0:
-            batch_data = json.dumps(all_info[-batch_size:])
-            pquery = llm_query(batch_data[:15000])
-            summaries.append(pquery["Summary"])
-            print(pquery["Summary"])
 
-            # add the asme llm_query output to the json of each packet in the batch for later consolidation into the final summary
-            if (
-                pquery
-                and "Summary" in pquery
-                and (pquery["Summary"] != "" and "Error" not in pquery["Summary"])
-            ):
-                for i in range(-batch_size, 0):
-                    if i >= -len(all_info):
-                        all_info[i]["LLM Analysis"] = pquery["Summary"]  # type: ignore
+
+def information_seive():
+    batch_size = 3
+    # iterate over a batch of 5 summaries and concatenate them into a single string to send to the LLM for a final analysis of the capture as a whole, generating insights on the traffic in the capture and adding that analysis to a final summary section in the all_testcases_info_by_host.json file
+    for i in range(0, len(summaries), batch_size):
+        batch = summaries[i : i + batch_size]
+        t = threading.Thread(
+            target=llm_query,
+            args=(" ".join(batch),),
+            name="LLM-Thread-" + str(i // batch_size),
+        )
+        threads.append(t)
+        t.start()
+    for t in threads:
+        t.join()
 
 
 def start_threading():
     if __name__ == "__main__":
+        pcap_percentage = 100
+        print(
+            "Spooling up " + str(nthreads) + " threads to process packets...",
+            file=sys.stderr,
+        )
         for c in range(nthreads):
             step = int(totalp / nthreads)
             start = int(c * step) if c != 0 else 0
@@ -596,18 +608,20 @@ def start_threading():
                     end,
                     c,
                 ),
+                name="Packet Processing Thread " + str(c),
             )
             threads.append(t)
             t.start()
         for t in threads:
             t.join()
+        information_seive()
         drilldown = " ".join(summaries) if summaries else "No LLM summaries generated."
         if config.get("final_summary", True) and config["ollama"].get("use_llm", True):
             try:
                 final_res = ollama.generate(
                     model=llm_model,
                     prompt="Provide a concise summary of the following packets, in paragraph form, limited to three paragraphs: "
-                    + drilldown,
+                    + drilldown[:100000],
                 )
                 if final_res and "response" in final_res:
                     print(
@@ -749,16 +763,24 @@ else:
             file=sys.stderr,
         )
 totalp = 0
-if args.source_port is None and args.dest_port is None:
-    totalp = len(scapy.rdpcap(args.pcap_file))  # type: ignore
-else:
-    for pkt in scapy.rdpcap(args.pcap_file):  # type: ignore
-        if pkt.haslayer("TCP"):
-            if (
-                pkt["TCP"].dport == args.dest_port
-                or pkt["TCP"].sport == args.source_port
-            ):
-                totalp = totalp + 1
+#   for pkt in scapy.rdpcap(args.pcap_file):  # type: ignore
+#    if pkt.haslayer("TCP"):
+#        if (
+#            pkt["TCP"].dport == args.dest_port
+#            or pkt["TCP"].sport == args.source_port
+#    ):
+#            totalp = totalp + 1
+# totalp should equal the number of TCP (only) packets in the capture that match the port filters specified by the user, if any, or all packets if no port filters are specified. This is used to determine how many packets will be processed and to provide progress updates.
+packets = scapy.rdpcap(args.pcap_file)  # type: ignore
+# The PacketList object provides a summary of included protocols
+# print(f"Packet summary: {packets.summary()}")
+# Use len() to get the total number of packets in the file
+total_packets = len(packets)
+# print(f"Total number of packets in the file: {total_packets}")
+
+# To count specifically TCP packets using a filter function:
+totalp = len([p for p in packets if p.haslayer("TCP")])
+
 if totalp == 0:
     print("No packets found matching the specified port filters.", file=sys.stderr)
     exit(1)
@@ -791,12 +813,10 @@ if "ollama" in config and config["ollama"].get("model"):
             file=sys.stderr,
         )
         llm_model = config["ollama"]["model"]
-    pcap_percentage = config["ollama"].get("pcap_percentage", 10)
     response_length = config["ollama"].get("response_length", 200)
     use_llm = config["ollama"].get("use_llm", False)
 else:
     llm_model = "minimax-m2.5:cloud"
-    pcap_percentage = 10
     response_length = 200
     use_llm = False
 
@@ -807,12 +827,6 @@ if llm_model and use_llm:
                 "Using cloud-based LLM model: "
                 + llm_model
                 + ". Ensure you have network connectivity and API access.",
-                file=sys.stderr,
-            )
-        if nthreads > 6:
-            nthreads = 6
-            print(
-                "Limiting concurrency to 4 threads to prevent excessive API calls to cloud LLM.",
                 file=sys.stderr,
             )
 
