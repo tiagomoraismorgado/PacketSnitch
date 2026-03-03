@@ -38,6 +38,7 @@ except ImportError:
 ar = "False"
 percentage_pcap = 10
 nthreads = 6
+nllmthreads = 5
 threads = []
 pktnum = 0
 
@@ -45,6 +46,7 @@ pktnum = 0
 response_length = 100
 llm_model = "minimax-m2.5:cloud"
 use_llm = False
+summaries = []
 
 
 def llm_query(packet_infos):
@@ -52,9 +54,11 @@ def llm_query(packet_infos):
         print(".", end="", flush=True)
     try:
         if ollama and use_llm and packet_infos:
-            for resc in range(2):
+            # these are for retreies
+            for resc in range(3):
                 try:
-                    print(".", end="", flush=True)
+                    if verbose == 0:
+                        print(".", end="", flush=True)
                     res = ollama.generate(
                         model=llm_model,
                         prompt=f"Tell me what you can about the following network capture (encoded in json, from pcap), its payload, and any interesting or unusual traits... respond with a single paragraph around {response_length} words: {packet_infos}",
@@ -62,6 +66,7 @@ def llm_query(packet_infos):
                     if res and "response" in res:
                         if verbose == 0:
                             print(".", end="", flush=True)
+                        summaries.append(res["response"])
                     else:
                         return {"Summary": ""}
                 except ResponseError as re:
@@ -599,7 +604,7 @@ summaries_batch = []
 
 def information_seive():
     # loop over a batch of packets stored in all_info and for every batch_size packets send them to the llm for analysis, where their response will be added to summaries[] for later
-    batch_size = 4
+    batch_size = 5
     q = ""
     for i in range(0, len(all_info), batch_size):
         if verbose == 0:
@@ -607,19 +612,30 @@ def information_seive():
         if i + batch_size > len(all_info):
             batch = all_info[i:]
             if use_llm:
-                q = llm_query(json.dumps(batch)).get("Summary", "")
-                summaries_batch.append(q)
+                # q = llm_query(json.dumps(batch)).get("Summary", "")
+                summaries_batch.append(batch)
         else:
             batch = all_info[i : i + batch_size]
             if use_llm:
-                q = llm_query(json.dumps(batch)).get("Summary", "")
-                summaries_batch.append(q)
+                # q = llm_query(json.dumps(batch)).get("Summary", "")
+                summaries_batch.append(batch)
 
         if verbose >= 2 and q:
             print(
                 f"\nLLM analysis for packets {i} to {i + batch_size}:\n{q}\n",
                 file=sys.stderr,
             )
+    for b in range(nllmthreads):
+        t = threading.Thread(
+            target=llm_query,
+            args=(json.dumps(summaries_batch[b]),),
+            name="LLM Analysis Thread " + str(b),
+        )
+        threads.append(t)
+        t.start()
+    for t in threads:
+        t.join()
+        print("Completed: " + t.name, file=sys.stderr)
 
 
 def start_threading():
@@ -652,9 +668,7 @@ def start_threading():
         for t in threads:
             t.join()
         information_seive()
-        drilldown = (
-            " ".join(summaries_batch) if summaries else "No LLM summaries generated."
-        )
+        drilldown = " ".join(summaries) if summaries else "No LLM summaries generated."
         if config.get("final_summary", True) and config["ollama"].get("use_llm", True):
             try:
                 final_res = ollama.generate(
